@@ -1,6 +1,8 @@
 # business-news-digest
 
-Daily links from **Barron's, MarketWatch, Investor's Business Daily, and The Wall Street Journal**, grouped by publication in a GitHub issue.
+Daily links from **The New York Times, The Wall Street Journal, MarketWatch,
+Barron's, Investor's Business Daily, Financial Times, and The Economist**,
+grouped by RSS feed in a GitHub issue.
 
 ## Schedule and delivery
 
@@ -15,23 +17,41 @@ To run immediately, select **Actions > Daily business news > Run workflow**.
 
 ## Sources and limitations
 
-The collector queries public Bing News RSS search results separately for each publisher,
-requests the past day's results, and then strictly filters timezone-aware publication
-timestamps to the last 24 hours. It unwraps index tracking links and accepts only URLs
-on the specified publisher's domain. Duplicate article URLs are collapsed.
+The collector fetches these public RSS feeds, then strictly filters timezone-aware
+publication timestamps to the last 24 hours:
+
+| Feed | URL |
+|------|-----|
+| NYT Business | https://rss.nytimes.com/services/xml/rss/nyt/Business.xml |
+| NYT Economy | https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml |
+| NYT Your Money | https://rss.nytimes.com/services/xml/rss/nyt/YourMoney.xml |
+| WSJ Markets | https://feeds.content.dowjones.io/public/rss/RSSMarketsMain |
+| MarketWatch | https://feeds.marketwatch.com/marketwatch/topstories |
+| Barrons | https://news.google.com/rss/search?q=when:24h+site:barrons.com&hl=en-US&gl=US&ceid=US:en |
+| IBD | https://www.investors.com/feed/ |
+| FT Markets | https://www.ft.com/markets?format=rss |
+| FT Global Economy | https://www.ft.com/global-economy?format=rss |
+| Economist Finance & Economics | https://www.economist.com/finance-and-economics/rss.xml |
+| Economist Business | https://www.economist.com/business/rss.xml |
+| Economist US | https://www.economist.com/united-states/rss.xml |
+
+Direct links must be on the specified publisher's domain. Barron's Google News RSS
+redirect links are also accepted when the entry's source URL identifies barrons.com;
+they are kept as Google News links rather than fetching subscription pages to resolve
+them. Duplicate article URLs are collapsed within each feed.
 
 Only titles, links, and publication times are collected. There is no article scraping,
 paywall bypass, subscription login, paid API, or external secret to configure.
 Open links with your own subscriptions.
 
-**This is an indexed-news digest, not a complete publisher archive.** Search indexes
+**This is an RSS digest, not a complete publisher archive.** Feeds and Google News
 can omit or delay articles, cap result sets, or report updated rather than original
-publication times. Invalid dates and non-publisher links are excluded and counted.
-An empty section means no verified indexed links were found, not that the publisher
+publication times. Invalid titles, dates, and source links are excluded and counted.
+An empty section means no verified feed links were found, not that the publisher
 published nothing.
 
 Feed errors appear in the issue and cause the workflow to fail, while successful
-publications still appear. A malformed/blocked response is not treated as an empty feed.
+feeds still appear. A malformed/blocked response is not treated as an empty feed.
 Issue-write errors also fail the workflow. No links are silently truncated if the
 issue body becomes too large.
 

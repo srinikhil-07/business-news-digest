@@ -1,4 +1,4 @@
-"""Collect public news-index links and publish a daily GitHub issue."""
+"""Collect public RSS news links and publish a daily GitHub issue."""
 
 import argparse
 from dataclasses import dataclass
@@ -10,18 +10,40 @@ import subprocess
 import sys
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 
 
-PUBLICATIONS = (
-    ("Barron's", "barrons.com"),
-    ("MarketWatch", "marketwatch.com"),
-    ("Investor's Business Daily", "investors.com"),
-    ("The Wall Street Journal", "wsj.com"),
-)
+RSS_FEEDS = {
+    "NYT Business": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "NYT Economy": "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+    "NYT Your Money": "https://rss.nytimes.com/services/xml/rss/nyt/YourMoney.xml",
+    "WSJ Markets": "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
+    "MarketWatch": "https://feeds.marketwatch.com/marketwatch/topstories",
+    "Barrons": "https://news.google.com/rss/search?q=when:24h+site:barrons.com&hl=en-US&gl=US&ceid=US:en",
+    "IBD": "https://www.investors.com/feed/",
+    "FT Markets": "https://www.ft.com/markets?format=rss",
+    "FT Global Economy": "https://www.ft.com/global-economy?format=rss",
+    "Economist Finance & Economics": "https://www.economist.com/finance-and-economics/rss.xml",
+    "Economist Business": "https://www.economist.com/business/rss.xml",
+    "Economist US": "https://www.economist.com/united-states/rss.xml",
+}
+PUBLISHER_DOMAINS = {
+    "NYT Business": "nytimes.com",
+    "NYT Economy": "nytimes.com",
+    "NYT Your Money": "nytimes.com",
+    "WSJ Markets": "wsj.com",
+    "MarketWatch": "marketwatch.com",
+    "Barrons": "barrons.com",
+    "IBD": "investors.com",
+    "FT Markets": "ft.com",
+    "FT Global Economy": "ft.com",
+    "Economist Finance & Economics": "economist.com",
+    "Economist Business": "economist.com",
+    "Economist US": "economist.com",
+}
 IST = ZoneInfo("Asia/Kolkata")
 MAX_BODY_BYTES = 60_000
 
@@ -34,12 +56,8 @@ class Article:
 
 
 def publisher_url(link, domain):
-    """Unwrap Bing's tracking URL without requesting subscription pages."""
+    """Accept direct links only on the expected publisher's domain."""
     parsed = urlsplit(link)
-    if parsed.hostname in ("bing.com", "www.bing.com"):
-        values = parse_qs(parsed.query)
-        link = values.get("url", [""])[0]
-        parsed = urlsplit(link)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in ("http", "https"):
         return None
@@ -59,8 +77,23 @@ def parse_feed(data, domain, start, end):
         link = (item.findtext("link") or "").strip()
         date = item.findtext("pubDate")
         url = publisher_url(link, domain)
+        if not url and domain == "barrons.com":
+            parsed = urlsplit(link)
+            source = item.find("source")
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname == "news.google.com"
+                and parsed.path.startswith("/rss/articles/")
+                and source is not None
+                and publisher_url(source.get("url", ""), domain)
+            ):
+                url = link
         try:
-            published = parsedate_to_datetime(date) if date else None
+            if date:
+                published = parsedate_to_datetime(date)
+            else:
+                date = item.findtext("{http://purl.org/dc/elements/1.1/}date")
+                published = datetime.fromisoformat(date.replace("Z", "+00:00")) if date else None
         except (TypeError, ValueError, OverflowError):
             published = None
         if not title or not url or published is None or published.tzinfo is None:
@@ -75,16 +108,9 @@ def parse_feed(data, domain, start, end):
     return sorted(articles.values(), key=lambda a: a.published, reverse=True), rejected
 
 
-def fetch_feed(domain):
-    query = urlencode({
-        "q": f"site:{domain}",
-        "qft": 'interval="9"',
-        "format": "rss",
-        "sortby": "date",
-        "setlang": "en-US",
-    })
+def fetch_feed(url):
     request = Request(
-        "https://www.bing.com/news/search?" + query,
+        url,
         headers={"User-Agent": "BusinessNewsDigest/1.0", "Accept": "application/rss+xml"},
     )
     for attempt in range(3):
@@ -112,18 +138,18 @@ def collect(now):
         f"Window: **{start.astimezone(IST):%Y-%m-%d %H:%M:%S}** to "
         f"**{now.astimezone(IST):%Y-%m-%d %H:%M:%S} IST** (preceding 24 hours).",
         "",
-        "Public Bing News index results only; coverage is not exhaustive. "
-        "Times are index-provided publication timestamps, which can reflect updates. "
+        "Public publisher RSS feeds and Google News RSS for Barron's; coverage is not exhaustive. "
+        "Times are feed-provided publication timestamps, which can reflect updates. "
         "No subscription pages or credentials are accessed.",
     ]
     failures = []
-    for name, domain in PUBLICATIONS:
+    for name, feed_url in RSS_FEEDS.items():
         lines.extend(["", f"## {name}", ""])
         try:
-            data = fetch_feed(domain)
+            data = fetch_feed(feed_url)
             if len(data) > 5_000_000:
                 raise ValueError("Feed exceeds the 5 MB response limit")
-            articles, rejected = parse_feed(data, domain, start, now)
+            articles, rejected = parse_feed(data, PUBLISHER_DOMAINS[name], start, now)
         except (HTTPError, URLError, TimeoutError, ET.ParseError, ValueError) as error:
             message = f"{name}: {type(error).__name__}: {error}"
             failures.append(message)
@@ -139,7 +165,7 @@ def collect(now):
                 f"— {article.published.astimezone(IST):%d %b, %H:%M} IST"
             )
         if rejected:
-            lines.extend(["", f"Excluded {rejected} entries with missing/invalid dates or non-publisher URLs."])
+            lines.extend(["", f"Excluded {rejected} entries with missing/invalid titles, dates, or source URLs."])
     lines.extend([
         "",
         "---",
